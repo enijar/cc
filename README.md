@@ -1,3 +1,3 @@
 # CC
 
-Collection of Minecraft CC: Tweaked mod scripts
+Collection of Minecraft CC: Tweaked mod scripts.
