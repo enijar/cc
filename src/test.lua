@@ -1,29 +1,76 @@
 local inv = peripheral.wrap("left")
+local mon = peripheral.find("monitor")
 
 if not inv then
-  print("No inventory found")
+  print("No inventory found on left")
   return
 end
 
-for slot, item in pairs(inv.list()) do
-  local detail = inv.getItemDetail(slot)
+if not mon then
+  print("No monitor found")
+  return
+end
 
-  if detail and detail.displayName == "Hydroponic Simulation Processor" then
-    print("Found processor in slot " .. slot)
-    print("Name: " .. detail.name)
-    print("Display: " .. detail.displayName)
+mon.setTextScale(0.5)
+mon.clear()
+mon.setCursorPos(1, 1)
 
-    if detail.lore then
-      print("Lore:")
-      for _, line in ipairs(detail.lore) do
-        print(line)
+local function writeLine(text)
+  local _, y = mon.getCursorPos()
+  local w, h = mon.getSize()
+
+  if y > h then
+    sleep(3)
+    mon.clear()
+    mon.setCursorPos(1, 1)
+  end
+
+  mon.write(tostring(text))
+  mon.setCursorPos(1, y + 1)
+end
+
+while true do
+  mon.clear()
+  mon.setCursorPos(1, 1)
+
+  writeLine("Hydroponic Bed Monitor")
+  writeLine("----------------------")
+
+  local found = false
+
+  for slot, item in pairs(inv.list()) do
+    local detail = inv.getItemDetail(slot)
+
+    if detail then
+      writeLine("Slot " .. slot .. ": " .. (detail.displayName or detail.name))
+      writeLine("Count: " .. detail.count)
+
+      if detail.displayName == "Hydroponic Simulation Processor" then
+        found = true
+        writeLine("")
+        writeLine("Processor found in slot " .. slot)
+
+        if detail.lore then
+          writeLine("Lore:")
+          for _, line in ipairs(detail.lore) do
+            writeLine(line)
+          end
+        else
+          writeLine("No lore visible")
+        end
+
+        if detail.nbt then
+          writeLine("NBT: " .. detail.nbt)
+        end
       end
-    else
-      print("No lore visible")
-    end
 
-    if detail.nbt then
-      print("NBT hash: " .. detail.nbt)
+      writeLine("")
     end
   end
+
+  if not found then
+    writeLine("No processor found")
+  end
+
+  sleep(5)
 end
