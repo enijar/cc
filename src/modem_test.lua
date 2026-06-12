@@ -7,22 +7,38 @@ if not modem then
 end
 
 print("Local modem: " .. MODEM)
-print("")
-
-if modem.getNameLocal then
-  print("Local name: " .. tostring(modem.getNameLocal()))
-end
-
+print("Type: " .. table.concat({ peripheral.getType(MODEM) }, ", "))
 print("")
 print("Remote peripherals:")
 
-local names = modem.getNamesRemote()
+local ok, names = pcall(function()
+  return modem.getNamesRemote()
+end)
 
-if #names == 0 then
+if not ok then
+  print("Could not call getNamesRemote")
+  print(names)
+  return
+end
+
+if not names or #names == 0 then
   print("NONE")
-else
-  for _, name in ipairs(names) do
-    local types = { modem.getTypeRemote(name) }
+  print("")
+  print("Fix:")
+  print("1. Right-click computer modem")
+  print("2. Right-click ME Drive modem")
+  print("3. Check cable connects both")
+  return
+end
+
+for _, name in ipairs(names) do
+  local okType, types = pcall(function()
+    return { modem.getTypeRemote(name) }
+  end)
+
+  if okType then
     print(name .. " -> " .. table.concat(types, ", "))
+  else
+    print(name .. " -> type error")
   end
 end
