@@ -1,9 +1,6 @@
-local IO = "left"
 local MONITOR = "right"
-local BARREL = "top"
-local DRIVE = "ae2:drive_0"
 
-local GENERATE_SECONDS = 10 * 60
+local GENERATE_SECONDS = 5
 local PAUSE_SECONDS = 2
 
 local USE_REDSTONE_CONTROL = false
@@ -11,7 +8,67 @@ local IO_REDSTONE_SIDE = "left"
 
 local STATE_FILE = ".void_cell_rotator_state"
 
+local SIDE_NAMES = {
+  left = true,
+  right = true,
+  top = true,
+  bottom = true,
+  front = true,
+  back = true,
+}
+
 local nativeTerm = term.current()
+
+local function getTypes(name)
+  return { peripheral.getType(name) }
+end
+
+local function typeString(name)
+  return table.concat(getTypes(name), ", ")
+end
+
+local function isInventory(name)
+  local p = peripheral.wrap(name)
+  return p and p.list and p.pushItems and p.pullItems and p.size
+end
+
+local function findPeripheralByTypeMatch(label, pattern)
+  local sideMatch = nil
+  local remoteMatch = nil
+
+  for _, name in ipairs(peripheral.getNames()) do
+    if isInventory(name) then
+      local types = string.lower(typeString(name))
+
+      if string.find(types, pattern, 1, true) then
+        if SIDE_NAMES[name] then
+          sideMatch = name
+        else
+          remoteMatch = name
+        end
+      end
+    end
+  end
+
+  if remoteMatch then
+    return remoteMatch
+  end
+
+  if sideMatch then
+    error(
+      label
+        .. " was found only as local side '"
+        .. sideMatch
+        .. "'. Add a Wired Modem directly to it, connect it to the CC network, right-click the modem, then rerun."
+    )
+  end
+
+  error("Could not find " .. label .. ". Run peripherals/modem_test and check it is connected.")
+end
+
+local IO = findPeripheralByTypeMatch("ME Extended IO Port", "extendedae:ex_io_port")
+local BARREL = findPeripheralByTypeMatch("Barrel", "minecraft:barrel")
+local DRIVE = findPeripheralByTypeMatch("ME Drive", "ae2:drive")
 
 local mon = peripheral.wrap(MONITOR)
 if mon then
@@ -27,7 +84,7 @@ local function wrapInventory(name)
   end
 
   if not p.list or not p.pushItems or not p.pullItems or not p.size then
-    error(name .. " is not an inventory")
+    error(name .. " is not an inventory. Type: " .. typeString(name))
   end
 
   return p
