@@ -1,29 +1,22 @@
 local IO = "left"
 local MONITOR = "right"
 local BARREL = "top"
+local DRIVE = "ae2:drive_0"
 
 local GENERATE_SECONDS = 10 * 60
 local PAUSE_SECONDS = 2
 
-local USE_REDSTONE_CONTROL = true
+local USE_REDSTONE_CONTROL = false
 local IO_REDSTONE_SIDE = "left"
 
-local CELL_NAME_MATCH = "void"
 local STATE_FILE = ".void_cell_rotator_state"
 
 local nativeTerm = term.current()
 
-local function getTypes(name)
-  return { peripheral.getType(name) }
-end
-
-local function typeString(name)
-  return table.concat(getTypes(name), ", ")
-end
-
-local function isInventory(name)
-  local p = peripheral.wrap(name)
-  return p and p.list and p.pushItems and p.size
+local mon = peripheral.wrap(MONITOR)
+if mon then
+  mon.setTextScale(0.5)
+  term.redirect(mon)
 end
 
 local function wrapInventory(name)
@@ -33,64 +26,22 @@ local function wrapInventory(name)
     error("Missing peripheral: " .. name)
   end
 
-  if not p.list or not p.pushItems or not p.size then
-    error(name .. " is not an inventory. Type: " .. typeString(name))
+  if not p.list or not p.pushItems or not p.pullItems or not p.size then
+    error(name .. " is not an inventory")
   end
 
   return p
 end
 
-local function itemMatchesCell(item)
-  if not item then
-    return false
-  end
-
-  local name = string.lower(item.name or "")
-  local displayName = string.lower(item.displayName or "")
-
-  return string.find(name, CELL_NAME_MATCH, 1, true)
-    or string.find(displayName, CELL_NAME_MATCH, 1, true)
-end
-
-local function detectDrive()
-  local candidates = {}
-
-  for _, name in ipairs(peripheral.getNames()) do
-    if name ~= IO and name ~= MONITOR and name ~= BARREL and isInventory(name) then
-      local inv = peripheral.wrap(name)
-
-      for _, item in pairs(inv.list()) do
-        if itemMatchesCell(item) then
-          table.insert(candidates, name)
-          break
-        end
-      end
-    end
-  end
-
-  if #candidates == 1 then
-    return candidates[1]
-  end
-
-  if #candidates > 1 then
-    error("Multiple possible drives found: " .. table.concat(candidates, ", "))
-  end
-
-  error("Could not auto-detect ME Drive. Add a wired modem to the ME Drive, then run peripherals.")
-end
-
-local DRIVE = detectDrive()
-
-local mon = peripheral.wrap(MONITOR)
-
-if mon then
-  mon.setTextScale(0.5)
-  term.redirect(mon)
-end
-
 local io = wrapInventory(IO)
 local barrel = wrapInventory(BARREL)
 local drive = wrapInventory(DRIVE)
+
+local inventories = {
+  [IO] = io,
+  [BARREL] = barrel,
+  [DRIVE] = drive,
+}
 
 local function clear()
   term.clear()
@@ -119,21 +70,19 @@ local function writeIndex(value)
   f.close()
 end
 
-local function getCellSlots(inv)
+local function getOccupiedSlots(inv)
   local slots = {}
 
   for slot, item in pairs(inv.list()) do
-    if itemMatchesCell(item) then
-      table.insert(slots, slot)
-    end
+    table.insert(slots, slot)
   end
 
   table.sort(slots)
   return slots
 end
 
-local function getFirstCellSlot(inv)
-  local slots = getCellSlots(inv)
+local function getFirstOccupiedSlot(inv)
+  local slots = getOccupiedSlots(inv)
   return slots[1]
 end
 
@@ -149,11 +98,11 @@ local function getEmptySlot(inv)
   return nil
 end
 
-local function getNextDriveCellSlot()
-  local slots = getCellSlots(drive)
+local function getNextDriveSlot()
+  local slots = getOccupiedSlots(drive)
 
   if #slots == 0 then
-    return nil
+    return nil, 0
   end
 
   local index = readIndex()
@@ -165,7 +114,6 @@ local function getNextDriveCellSlot()
   local slot = slots[index]
 
   index = index + 1
-
   if index > #slots then
     index = 1
   end
@@ -175,14 +123,49 @@ local function getNextDriveCellSlot()
   return slot, #slots
 end
 
-local function moveExact(fromInv, fromName, toName, fromSlot, count, toSlot)
-  local moved = fromInv.pushItems(toName, fromSlot, count, toSlot)
+local function moveExact(fromName, toName, fromSlot, count, toSlot)
+  local fromInv = inventories[fromName]
+  local toInv = inventories[toName]
 
-  if moved ~= count then
-    error("Move failed: " .. fromName .. " slot " .. fromSlot .. " -> " .. toName)
+  if not fromInv then
+    error("Unknown source inventory: " .. tostring(fromName))
   end
 
-  return moved
+  if not toInv then
+    error("Unknown target inventory: " .. tostring(toName))
+  end
+
+  local okPush, movedPush = pcall(function()
+    return fromInv.pushItems(toName, fromSlot, count, toSlot)
+  end)
+
+  if okPush and movedPush == count then
+    return movedPush
+  end
+
+  local okPull, movedPull = pcall(function()
+    return toInv.pullItems(fromName, fromSlot, count, toSlot)
+  end)
+
+  if okPull and movedPull == count then
+    return movedPull
+  end
+
+  local pushResult = okPush and tostring(movedPush) or tostring(movedPush)
+  local pullResult = okPull and tostring(movedPull) or tostring(movedPull)
+
+  error(
+    "Move failed: "
+      .. fromName
+      .. " slot "
+      .. tostring(fromSlot)
+      .. " -> "
+      .. toName
+      .. "\nPush result: "
+      .. pushResult
+      .. "\nPull result: "
+      .. pullResult
+  )
 end
 
 local function setIoRunning(running)
@@ -199,60 +182,60 @@ local function showHeader()
   log("IO Port: " .. IO)
   log("Barrel: " .. BARREL)
   log("Drive: " .. DRIVE)
-  log("Drive type: " .. typeString(DRIVE))
   log("")
 end
 
 local function rotate()
   showHeader()
-  log("Pausing IO Port...")
+  log("Pausing...")
   setIoRunning(false)
   sleep(PAUSE_SECONDS)
 
-  local ioSlot = getFirstCellSlot(io)
-  local driveSlot, driveCellCount = getNextDriveCellSlot()
+  local ioSlot = getFirstOccupiedSlot(io)
+  local driveSlot, driveCellCount = getNextDriveSlot()
   local barrelSlot = getEmptySlot(barrel)
 
   if not driveSlot then
-    error("No Void Cell found in ME Drive.")
+    error("No cells found in ME Drive.")
   end
 
   if not barrelSlot then
     error("Barrel has no empty slot.")
   end
 
-  log("Drive cells: " .. tostring(driveCellCount))
-  log("IO cell slot: " .. tostring(ioSlot or "none"))
-  log("Next drive slot: " .. tostring(driveSlot))
-  log("Barrel slot: " .. tostring(barrelSlot))
+  log("Drive cells: " .. driveCellCount)
+  log("IO slot: " .. tostring(ioSlot or "none"))
+  log("Next drive slot: " .. driveSlot)
+  log("Barrel slot: " .. barrelSlot)
   log("")
 
   if not ioSlot then
     log("No cell in IO Port.")
     log("Moving Drive -> IO Port")
-    moveExact(drive, DRIVE, IO, driveSlot, 1)
+    moveExact(DRIVE, IO, driveSlot, 1)
     setIoRunning(true)
     return
   end
 
   log("1. IO Port -> Barrel")
-  moveExact(io, IO, BARREL, ioSlot, 1, barrelSlot)
+  moveExact(IO, BARREL, ioSlot, 1, barrelSlot)
 
   log("2. ME Drive -> IO Port")
-  local movedToIo = drive.pushItems(IO, driveSlot, 1, ioSlot)
+  local okMove, errMove = pcall(function()
+    moveExact(DRIVE, IO, driveSlot, 1, ioSlot)
+  end)
 
-  if movedToIo ~= 1 then
-    log("Failed. Returning old cell to IO Port.")
-    barrel.pushItems(IO, barrelSlot, 1, ioSlot)
-    error("Could not move new Void Cell into IO Port.")
+  if not okMove then
+    log("Failed. Returning old cell.")
+    moveExact(BARREL, IO, barrelSlot, 1, ioSlot)
+    error("Could not move new cell into IO Port.\n" .. tostring(errMove))
   end
 
   log("3. Barrel -> ME Drive")
-  moveExact(barrel, BARREL, DRIVE, barrelSlot, 1, driveSlot)
+  moveExact(BARREL, DRIVE, barrelSlot, 1, driveSlot)
 
   log("")
   log("Rotation complete.")
-  log("Resuming IO Port.")
   setIoRunning(true)
 end
 
@@ -264,7 +247,7 @@ while true do
   log("")
 
   for remaining = GENERATE_SECONDS, 1, -1 do
-    term.setCursorPos(1, 10)
+    term.setCursorPos(1, 9)
     term.clearLine()
     write("Next swap: " .. remaining .. "s")
     sleep(1)
